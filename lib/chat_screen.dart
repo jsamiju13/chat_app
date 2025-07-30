@@ -104,7 +104,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     final message = messages[index];
                     return ListTile(
                       title: Text(message['content']),
-                      subtitle: Text("${_formatDate(message['created_at'])}"),
+                      subtitle: Text(_formatDate(message['created_at'])),
                     );
                   },
                 );
