@@ -11,15 +11,43 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final _textController = TextEditingController();
-  final _messagesStream = Supabase.instance.client
-      .from('messages')
-      .stream(primaryKey: ['id'])
-      .order('created_at');
+  late final Stream<List<Map<String, dynamic>>> _messagesStream;
+  Set<String> _blockedUserIds = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchBlockedUsers();
+    _messagesStream = Supabase.instance.client
+        .from('messages')
+        .stream(primaryKey: ['id'])
+        .order('created_at')
+        .map((messages) {
+      return messages
+          .where((message) =>
+              message['user_id'] != null &&
+              !_blockedUserIds.contains(message['user_id']))
+          .toList();
+    });
+  }
 
   @override
   void dispose() {
     _textController.dispose();
     super.dispose();
+  }
+
+  Future<void> _fetchBlockedUsers() async {
+    final userId = Supabase.instance.client.auth.currentUser!.id;
+    final response = await Supabase.instance.client
+        .from('blocked_users')
+        .select('blocked_id')
+        .eq('blocker_id', userId);
+    final blockedUsers =
+        (response as List).map((item) => item['blocked_id'] as String).toSet();
+    setState(() {
+      _blockedUserIds = blockedUsers;
+    });
   }
 
   Future<void> _sendMessage() async {
@@ -50,6 +78,47 @@ class _ChatScreenState extends State<ChatScreen> {
     Navigator.of(
       context,
     ).pushReplacement(MaterialPageRoute(builder: (_) => const SplashScreen()));
+  }
+
+  Future<void> _blockUser(String blockedId) async {
+    final blockerId = Supabase.instance.client.auth.currentUser!.id;
+    try {
+      await Supabase.instance.client.from('blocked_users').insert({
+        'blocker_id': blockerId,
+        'blocked_id': blockedId,
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Usuario bloqueado.')),
+      );
+      _fetchBlockedUsers(); // Refresh the blocked users list
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error al bloquear usuario: $e')),
+      );
+    }
+  }
+
+  void _showBlockMenu(String userId) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.block),
+                title: const Text('Bloquear Usuario'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _blockUser(userId);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   String _formatDate(String isoDate) {
@@ -102,9 +171,17 @@ class _ChatScreenState extends State<ChatScreen> {
                   itemCount: messages.length,
                   itemBuilder: (context, index) {
                     final message = messages[index];
+                    final userId = message['user_id'];
+                    final isMyMessage = userId == Supabase.instance.client.auth.currentUser!.id;
+
                     return ListTile(
                       title: Text(message['content']),
-                      subtitle: Text("${_formatDate(message['created_at'])}"),
+                      subtitle: Text(_formatDate(message['created_at'])),
+                      onLongPress: () {
+                        if (!isMyMessage && userId != null) {
+                          _showBlockMenu(userId);
+                        }
+                      },
                     );
                   },
                 );
