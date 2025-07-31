@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:chat_app/splash_screen.dart';
@@ -14,11 +15,15 @@ class _ChatScreenState extends State<ChatScreen> {
   late final Stream<List<Map<String, dynamic>>> _messagesStream;
   Set<String> _blockedUserIds = {};
 
+  // Estado para el rate limiting
+  bool _isRateLimited = false;
+  int _penaltySecondsRemaining = 0;
+  Timer? _penaltyTimer;
+
   @override
   void initState() {
     super.initState();
     _fetchBlockedUsers();
-    // El stream ahora obtiene todos los mensajes, la lógica de UI decidirá qué mostrar.
     _messagesStream = Supabase.instance.client
         .from('messages')
         .stream(primaryKey: ['id']).order('created_at');
@@ -27,7 +32,31 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _textController.dispose();
+    _penaltyTimer?.cancel(); // Asegurarse de cancelar el timer
     super.dispose();
+  }
+
+  void _startRateLimitPenalty() {
+    if (_isRateLimited) return; // Si ya está en penalización, no hacer nada
+
+    setState(() {
+      _isRateLimited = true;
+      _penaltySecondsRemaining = 15;
+    });
+
+    _penaltyTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_penaltySecondsRemaining > 1) {
+        setState(() {
+          _penaltySecondsRemaining--;
+        });
+      } else {
+        setState(() {
+          _isRateLimited = false;
+          _penaltySecondsRemaining = 0;
+        });
+        timer.cancel();
+      }
+    });
   }
 
   Future<void> _fetchBlockedUsers() async {
@@ -50,7 +79,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _sendMessage() async {
-    if (_textController.text.isEmpty) return;
+    if (_textController.text.isEmpty || _isRateLimited) return;
     try {
       final userId = Supabase.instance.client.auth.currentUser!.id;
       await Supabase.instance.client.from('messages').insert({
@@ -58,6 +87,14 @@ class _ChatScreenState extends State<ChatScreen> {
         'user_id': userId,
       });
       _textController.clear();
+    } on PostgrestException catch (e) {
+      if (e.code == '429') {
+        _startRateLimitPenalty();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al enviar mensaje: ${e.message}')),
+        );
+      }
     } catch (e) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Error al enviar mensaje: $e')));
@@ -79,13 +116,12 @@ class _ChatScreenState extends State<ChatScreen> {
           .insert({'blocker_id': blockerId, 'blocked_id': blockedId});
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('Usuario bloqueado.')));
-      _fetchBlockedUsers(); // Actualizar la UI
+      _fetchBlockedUsers();
     } catch (e) {
       // Manejar error
     }
   }
 
-  // NUEVO: Función para desbloquear un usuario.
   Future<void> _unblockUser(String blockedId) async {
     final blockerId = Supabase.instance.client.auth.currentUser!.id;
     try {
@@ -95,7 +131,7 @@ class _ChatScreenState extends State<ChatScreen> {
           .match({'blocker_id': blockerId, 'blocked_id': blockedId});
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('Usuario desbloqueado.')));
-      _fetchBlockedUsers(); // Actualizar la UI
+      _fetchBlockedUsers();
     } catch (e) {
       // Manejar error
     }
@@ -162,7 +198,6 @@ class _ChatScreenState extends State<ChatScreen> {
                     final isMyMessage = userId == Supabase.instance.client.auth.currentUser!.id;
                     final isBlocked = _blockedUserIds.contains(userId);
 
-                    // Widget para mensajes bloqueados
                     if (isBlocked && !isMyMessage) {
                       return ListTile(
                         leading: const Icon(Icons.block, color: Colors.grey),
@@ -174,7 +209,6 @@ class _ChatScreenState extends State<ChatScreen> {
                       );
                     }
 
-                    // Widget para mensajes normales
                     return ListTile(
                       title: Text(message['content']),
                       subtitle: Text(_formatDate(message['created_at'])),
@@ -189,17 +223,40 @@ class _ChatScreenState extends State<ChatScreen> {
               },
             ),
           ),
+          // Widget de penalización
+          if (_isRateLimited)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              color: Colors.red.withOpacity(0.9),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.timer, color: Colors.white, size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Demasiado rápido. Puedes volver a intentarlo en $_penaltySecondsRemaining segundos.',
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                ],
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.all(8.0),
             child: Row(children: [
               Expanded(
                 child: TextFormField(
                   controller: _textController,
-                  decoration: const InputDecoration(hintText: 'Escribe un mensaje...'),
+                  enabled: !_isRateLimited, // Desactivar si está penalizado
+                  decoration: InputDecoration(
+                    hintText: _isRateLimited ? '...' : 'Escribe un mensaje...',
+                  ),
                   onFieldSubmitted: (_) => _sendMessage(),
                 ),
               ),
-              IconButton(icon: const Icon(Icons.send), onPressed: _sendMessage),
+              IconButton(
+                icon: const Icon(Icons.send),
+                onPressed: _isRateLimited ? null : _sendMessage, // Desactivar si está penalizado
+              ),
             ]),
           ),
         ],
