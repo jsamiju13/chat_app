@@ -11,6 +11,51 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
+class MessageCensor {
+  static List<String>? _cachedBlacklist;
+  static DateTime? _lastUpdated;
+
+  // Cargar palabras con caché (actualizar periódicamente)
+  static Future<void> _loadWords() async {
+    final now = DateTime.now();
+    if (_cachedBlacklist == null ||
+        _lastUpdated == null ||
+        now.difference(_lastUpdated!).inMinutes >= 5) {
+      try {
+        final response = await Supabase.instance.client
+            .from('blocked_words')
+            .select('word');
+        _cachedBlacklist = (response as List)
+            .map((item) => item['word'] as String)
+            .toList();
+        _lastUpdated = now;
+      } catch (e) {
+        _cachedBlacklist = [];
+      }
+    }
+  }
+
+  // Censurar mensaje po causa
+  static Future<String> censorMessage(String message) async {
+    await _loadWords();
+    String censored = message;
+    final blacklist = _cachedBlacklist ?? [];
+
+    // Aplicar blacklist (expresiones regulares)
+    for (final word in blacklist) {
+      final regex = RegExp(
+        r'\b' + RegExp.escape(word) + r'\b',
+        caseSensitive: false,
+      );
+      censored = censored.replaceAllMapped(regex, (match) {
+        return '*' * match.group(0)!.length;
+      });
+    }
+
+    return censored;
+  }
+}
+
 class _ChatScreenState extends State<ChatScreen> {
   final _textController = TextEditingController();
   late final Stream<List<Map<String, dynamic>>> _messagesStream;
@@ -40,10 +85,9 @@ class _ChatScreenState extends State<ChatScreen> {
           .from('blocked_users')
           .select('blocked_id')
           .eq('blocker_id', userId);
-      final blockedUsers =
-          (response as List)
-              .map((item) => item['blocked_id'] as String)
-              .toSet();
+      final blockedUsers = (response as List)
+          .map((item) => item['blocked_id'] as String)
+          .toSet();
       if (mounted) {
         setState(() {
           _blockedUserIds = blockedUsers;
@@ -243,10 +287,7 @@ class _ChatScreenState extends State<ChatScreen> {
         actions: [
           IconButton(
             onPressed: () =>
-                Provider.of<ThemeProvider>(
-                  context,
-                  listen: false,
-                ).nextTheme(),
+                Provider.of<ThemeProvider>(context, listen: false).nextTheme(),
             icon: const Icon(Icons.color_lens),
             tooltip: 'Cambiar tema',
           ),
@@ -350,24 +391,23 @@ class _ChatScreenState extends State<ChatScreen> {
                       return GestureDetector(
                         onLongPress: () => _showMessageOptions(message),
                         child: Align(
-                          alignment:
-                              isMe
-                                  ? Alignment.centerRight
-                                  : Alignment.centerLeft,
+                          alignment: isMe
+                              ? Alignment.centerRight
+                              : Alignment.centerLeft,
                           child: Padding(
                             padding: const EdgeInsets.symmetric(vertical: 4.0),
                             child: Row(
-                              mainAxisAlignment:
-                                  isMe
-                                      ? MainAxisAlignment.end
-                                      : MainAxisAlignment.start,
+                              mainAxisAlignment: isMe
+                                  ? MainAxisAlignment.end
+                                  : MainAxisAlignment.start,
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
                                 if (!isMe)
                                   CircleAvatar(
                                     radius: 18,
-                                    backgroundColor:
-                                        Theme.of(context).colorScheme.secondary,
+                                    backgroundColor: Theme.of(
+                                      context,
+                                    ).colorScheme.secondary,
                                     child: Icon(
                                       Icons.person,
                                       color:
@@ -384,14 +424,13 @@ class _ChatScreenState extends State<ChatScreen> {
                                       vertical: 10,
                                     ),
                                     decoration: BoxDecoration(
-                                      color:
-                                          isMe
-                                              ? Theme.of(
-                                                context,
-                                              ).colorScheme.primary
-                                              : Theme.of(
-                                                context,
-                                              ).colorScheme.secondary,
+                                      color: isMe
+                                          ? Theme.of(
+                                              context,
+                                            ).colorScheme.primary
+                                          : Theme.of(
+                                              context,
+                                            ).colorScheme.secondary,
                                       borderRadius: BorderRadius.only(
                                         topLeft: const Radius.circular(18),
                                         topRight: const Radius.circular(18),
@@ -404,10 +443,9 @@ class _ChatScreenState extends State<ChatScreen> {
                                       ),
                                     ),
                                     child: Column(
-                                      crossAxisAlignment:
-                                          isMe
-                                              ? CrossAxisAlignment.end
-                                              : CrossAxisAlignment.start,
+                                      crossAxisAlignment: isMe
+                                          ? CrossAxisAlignment.end
+                                          : CrossAxisAlignment.start,
                                       children: [
                                         Text(
                                           message['content'],
@@ -419,16 +457,17 @@ class _ChatScreenState extends State<ChatScreen> {
                                         const SizedBox(height: 4),
                                         Text(
                                           '${_formatDate(message['created_at'])}${message['is_edited'] == true ? ' (editado)' : ''}',
-                                          style: Theme.of(
-                                            context,
-                                          ).textTheme.bodyMedium?.copyWith(
-                                            fontSize: 12,
-                                            color: Theme.of(context)
-                                                .textTheme
-                                                .bodyMedium
-                                                ?.color
-                                                ?.withOpacity(0.54),
-                                          ),
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodyMedium
+                                              ?.copyWith(
+                                                fontSize: 12,
+                                                color: Theme.of(context)
+                                                    .textTheme
+                                                    .bodyMedium
+                                                    ?.color
+                                                    ?.withOpacity(0.54),
+                                              ),
                                         ),
                                       ],
                                     ),
@@ -438,8 +477,9 @@ class _ChatScreenState extends State<ChatScreen> {
                                 if (isMe)
                                   CircleAvatar(
                                     radius: 18,
-                                    backgroundColor:
-                                        Theme.of(context).colorScheme.primary,
+                                    backgroundColor: Theme.of(
+                                      context,
+                                    ).colorScheme.primary,
                                     child: Icon(
                                       Icons.person,
                                       color:
@@ -479,22 +519,20 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         child: TextFormField(
                           controller: _textController,
-                          style:
-                              Theme.of(context)
-                                  .textTheme
-                                  .bodyMedium, // Use the current theme's bodyMedium style
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodyMedium, // Use the current theme's bodyMedium style
                           decoration: InputDecoration(
                             // Make InputDecoration non-const
                             hintText: 'Escribe un mensaje...',
-                            hintStyle: Theme.of(
-                              context,
-                            ).textTheme.bodyMedium?.copyWith(
-                              color: Theme.of(context)
-                                  .textTheme
-                                  .bodyMedium
-                                  ?.color // Access color property
-                                  ?.withOpacity(0.54),
-                            ),
+                            hintStyle: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(
+                                  color: Theme.of(context)
+                                      .textTheme
+                                      .bodyMedium
+                                      ?.color // Access color property
+                                      ?.withOpacity(0.54),
+                                ),
                             border: InputBorder.none,
                             contentPadding: const EdgeInsets.symmetric(
                               horizontal: 20,
