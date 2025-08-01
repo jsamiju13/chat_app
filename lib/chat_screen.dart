@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:chat_app/splash_screen.dart';
@@ -15,15 +14,11 @@ class _ChatScreenState extends State<ChatScreen> {
   late final Stream<List<Map<String, dynamic>>> _messagesStream;
   Set<String> _blockedUserIds = {};
 
-  // Estado para el rate limiting
-  bool _isRateLimited = false;
-  int _penaltySecondsRemaining = 0;
-  Timer? _penaltyTimer;
-
   @override
   void initState() {
     super.initState();
     _fetchBlockedUsers();
+    // The stream fetches all messages, UI will handle visibility
     _messagesStream = Supabase.instance.client
         .from('messages')
         .stream(primaryKey: ['id']).order('created_at');
@@ -32,31 +27,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _textController.dispose();
-    _penaltyTimer?.cancel(); // Asegurarse de cancelar el timer
     super.dispose();
-  }
-
-  void _startRateLimitPenalty() {
-    if (_isRateLimited) return; // Si ya está en penalización, no hacer nada
-
-    setState(() {
-      _isRateLimited = true;
-      _penaltySecondsRemaining = 15;
-    });
-
-    _penaltyTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (_penaltySecondsRemaining > 1) {
-        setState(() {
-          _penaltySecondsRemaining--;
-        });
-      } else {
-        setState(() {
-          _isRateLimited = false;
-          _penaltySecondsRemaining = 0;
-        });
-        timer.cancel();
-      }
-    });
   }
 
   Future<void> _fetchBlockedUsers() async {
@@ -74,12 +45,12 @@ class _ChatScreenState extends State<ChatScreen> {
         });
       }
     } catch (e) {
-      // Manejar error
+      // Handle error
     }
   }
 
   Future<void> _sendMessage() async {
-    if (_textController.text.isEmpty || _isRateLimited) return;
+    if (_textController.text.isEmpty) return;
     try {
       final userId = Supabase.instance.client.auth.currentUser!.id;
       await Supabase.instance.client.from('messages').insert({
@@ -87,14 +58,6 @@ class _ChatScreenState extends State<ChatScreen> {
         'user_id': userId,
       });
       _textController.clear();
-    } on PostgrestException catch (e) {
-      if (e.code == '429') {
-        _startRateLimitPenalty();
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al enviar mensaje: ${e.message}')),
-        );
-      }
     } catch (e) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Error al enviar mensaje: $e')));
@@ -118,7 +81,7 @@ class _ChatScreenState extends State<ChatScreen> {
           .showSnackBar(const SnackBar(content: Text('Usuario bloqueado.')));
       _fetchBlockedUsers();
     } catch (e) {
-      // Manejar error
+      // Handle error
     }
   }
 
@@ -133,57 +96,31 @@ class _ChatScreenState extends State<ChatScreen> {
           .showSnackBar(const SnackBar(content: Text('Usuario desbloqueado.')));
       _fetchBlockedUsers();
     } catch (e) {
-      // Manejar error
+      // Handle error
     }
   }
 
-  Future<void> _editMessage(String messageId, String newContent) async {
-    if (newContent.isEmpty) return;
+  // Function to "soft delete" a message
+  Future<void> _deleteMessage(int messageId) async {
     try {
       await Supabase.instance.client
           .from('messages')
-          .update({'content': newContent, 'is_edited': true})
-          .eq('id', messageId);
+          .update({'is_deleted': true}) // Set is_deleted to true
+          .match({'id': messageId});
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Mensaje eliminado.')));
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Error al editar mensaje: $e')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error al eliminar el mensaje: $e')));
+      }
     }
   }
 
-  void _showEditMessageDialog(Map<String, dynamic> message) {
-    final editController = TextEditingController(text: message['content']);
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Editar Mensaje'),
-          content: TextField(
-            controller: editController,
-            autofocus: true,
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancelar'),
-            ),
-            TextButton(
-              onPressed: () {
-                _editMessage(message['id'].toString(), editController.text.trim());
-                Navigator.of(context).pop();
-              },
-              child: const Text('Guardar'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _showMessageOptions(Map<String, dynamic> message) {
-    final isMyMessage = message['user_id'] == Supabase.instance.client.auth.currentUser!.id;
-    final userId = message['user_id'] as String?;
-    final isBlocked = userId != null && _blockedUserIds.contains(userId);
-
+  // Simplified options menu, only for blocking/unblocking
+  void _showMessageOptions(String userId, bool isBlocked) {
     showModalBottomSheet(
       context: context,
       builder: (context) {
@@ -191,28 +128,19 @@ class _ChatScreenState extends State<ChatScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (isMyMessage)
-                ListTile(
-                  leading: const Icon(Icons.edit),
-                  title: const Text('Editar Mensaje'),
-                  onTap: () {
-                    Navigator.of(context).pop();
-                    _showEditMessageDialog(message);
-                  },
-                ),
-              if (!isMyMessage && userId != null)
-                ListTile(
-                  leading: Icon(isBlocked ? Icons.lock_open : Icons.block),
-                  title: Text(isBlocked ? 'Desbloquear Usuario' : 'Bloquear Usuario'),
-                  onTap: () {
-                    Navigator.of(context).pop();
-                    if (isBlocked) {
-                      _unblockUser(userId);
-                    } else {
-                      _blockUser(userId);
-                    }
-                  },
-                ),
+              ListTile(
+                leading: Icon(isBlocked ? Icons.lock_open : Icons.block),
+                title: Text(
+                    isBlocked ? 'Desbloquear Usuario' : 'Bloquear Usuario'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  if (isBlocked) {
+                    _unblockUser(userId);
+                  } else {
+                    _blockUser(userId);
+                  }
+                },
+              ),
             ],
           ),
         );
