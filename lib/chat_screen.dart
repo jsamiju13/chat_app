@@ -137,7 +137,53 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void _showMessageOptions(String userId, bool isBlocked) {
+  Future<void> _editMessage(String messageId, String newContent) async {
+    if (newContent.isEmpty) return;
+    try {
+      await Supabase.instance.client
+          .from('messages')
+          .update({'content': newContent, 'is_edited': true})
+          .eq('id', messageId);
+    } catch (e) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Error al editar mensaje: $e')));
+    }
+  }
+
+  void _showEditMessageDialog(Map<String, dynamic> message) {
+    final editController = TextEditingController(text: message['content']);
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Editar Mensaje'),
+          content: TextField(
+            controller: editController,
+            autofocus: true,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancelar'),
+            ),
+            TextButton(
+              onPressed: () {
+                _editMessage(message['id'].toString(), editController.text.trim());
+                Navigator.of(context).pop();
+              },
+              child: const Text('Guardar'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showMessageOptions(Map<String, dynamic> message) {
+    final isMyMessage = message['user_id'] == Supabase.instance.client.auth.currentUser!.id;
+    final userId = message['user_id'] as String?;
+    final isBlocked = userId != null && _blockedUserIds.contains(userId);
+
     showModalBottomSheet(
       context: context,
       builder: (context) {
@@ -145,18 +191,28 @@ class _ChatScreenState extends State<ChatScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              ListTile(
-                leading: Icon(isBlocked ? Icons.lock_open : Icons.block),
-                title: Text(isBlocked ? 'Desbloquear Usuario' : 'Bloquear Usuario'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  if (isBlocked) {
-                    _unblockUser(userId);
-                  } else {
-                    _blockUser(userId);
-                  }
-                },
-              ),
+              if (isMyMessage)
+                ListTile(
+                  leading: const Icon(Icons.edit),
+                  title: const Text('Editar Mensaje'),
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    _showEditMessageDialog(message);
+                  },
+                ),
+              if (!isMyMessage && userId != null)
+                ListTile(
+                  leading: Icon(isBlocked ? Icons.lock_open : Icons.block),
+                  title: Text(isBlocked ? 'Desbloquear Usuario' : 'Bloquear Usuario'),
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    if (isBlocked) {
+                      _unblockUser(userId);
+                    } else {
+                      _blockUser(userId);
+                    }
+                  },
+                ),
             ],
           ),
         );
@@ -205,16 +261,18 @@ class _ChatScreenState extends State<ChatScreen> {
                           'Mensaje de un usuario bloqueado',
                           style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
                         ),
-                        onLongPress: () => _showMessageOptions(userId, true),
+                        onLongPress: () => _showMessageOptions(message),
                       );
                     }
 
+                    final isEdited = message['is_edited'] == true;
+
                     return ListTile(
                       title: Text(message['content']),
-                      subtitle: Text(_formatDate(message['created_at'])),
+                      subtitle: Text('${_formatDate(message['created_at'])}${isEdited ? ' (editado)' : ''}'),
                       onLongPress: () {
-                        if (!isMyMessage && userId != null) {
-                          _showMessageOptions(userId, false);
+                        if (userId != null) {
+                          _showMessageOptions(message);
                         }
                       },
                     );
