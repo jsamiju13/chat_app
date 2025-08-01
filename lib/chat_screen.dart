@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:chat_app/splash_screen.dart';
+import 'package:provider/provider.dart';
+import 'package:chat_app/theme.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -21,7 +23,8 @@ class _ChatScreenState extends State<ChatScreen> {
     // The stream fetches all messages, UI will handle visibility
     _messagesStream = Supabase.instance.client
         .from('messages')
-        .stream(primaryKey: ['id']).order('created_at');
+        .stream(primaryKey: ['id'])
+        .order('created_at');
   }
 
   @override
@@ -38,7 +41,9 @@ class _ChatScreenState extends State<ChatScreen> {
           .select('blocked_id')
           .eq('blocker_id', userId);
       final blockedUsers =
-          (response as List).map((item) => item['blocked_id'] as String).toSet();
+          (response as List)
+              .map((item) => item['blocked_id'] as String)
+              .toSet();
       if (mounted) {
         setState(() {
           _blockedUserIds = blockedUsers;
@@ -59,27 +64,31 @@ class _ChatScreenState extends State<ChatScreen> {
       });
       _textController.clear();
     } catch (e) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Error al enviar mensaje: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error al enviar mensaje: $e')));
     }
   }
 
   Future<void> _signOut() async {
     await Supabase.instance.client.auth.signOut();
     if (!mounted) return;
-    Navigator.of(context)
-        .pushReplacement(MaterialPageRoute(builder: (_) => const SplashScreen()));
+    Navigator.of(
+      context,
+    ).pushReplacement(MaterialPageRoute(builder: (_) => const SplashScreen()));
   }
 
   Future<void> _blockUser(String blockedId) async {
     final blockerId = Supabase.instance.client.auth.currentUser!.id;
     try {
-      await Supabase.instance.client
-          .from('blocked_users')
-          .insert({'blocker_id': blockerId, 'blocked_id': blockedId});
+      await Supabase.instance.client.from('blocked_users').insert({
+        'blocker_id': blockerId,
+        'blocked_id': blockedId,
+      });
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Usuario bloqueado.')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Usuario bloqueado.')));
       _fetchBlockedUsers();
     } catch (e) {
       // Handle error
@@ -89,13 +98,14 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _unblockUser(String blockedId) async {
     final blockerId = Supabase.instance.client.auth.currentUser!.id;
     try {
-      await Supabase.instance.client
-          .from('blocked_users')
-          .delete()
-          .match({'blocker_id': blockerId, 'blocked_id': blockedId});
+      await Supabase.instance.client.from('blocked_users').delete().match({
+        'blocker_id': blockerId,
+        'blocked_id': blockedId,
+      });
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Usuario desbloqueado.')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Usuario desbloqueado.')));
       _fetchBlockedUsers();
     } catch (e) {
       // Handle error
@@ -110,8 +120,9 @@ class _ChatScreenState extends State<ChatScreen> {
           .update({'content': newContent, 'is_edited': true})
           .eq('id', messageId);
     } catch (e) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Error al editar mensaje: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error al editar mensaje: $e')));
     }
   }
 
@@ -122,10 +133,7 @@ class _ChatScreenState extends State<ChatScreen> {
       builder: (context) {
         return AlertDialog(
           title: const Text('Editar Mensaje'),
-          content: TextField(
-            controller: editController,
-            autofocus: true,
-          ),
+          content: TextField(controller: editController, autofocus: true),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
@@ -146,18 +154,19 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _deleteMessage(int messageId) async {
     try {
-      await Supabase.instance.client
-          .from('messages')
-          .delete()
-          .match({'id': messageId});
+      await Supabase.instance.client.from('messages').delete().match({
+        'id': messageId,
+      });
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Mensaje eliminado.')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Mensaje eliminado.')));
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error al eliminar el mensaje: $e')));
+          SnackBar(content: Text('Error al eliminar el mensaje: $e')),
+        );
       }
     }
   }
@@ -197,7 +206,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 ListTile(
                   leading: Icon(isBlocked ? Icons.lock_open : Icons.block),
                   title: Text(
-                      isBlocked ? 'Desbloquear Usuario' : 'Bloquear Usuario'),
+                    isBlocked ? 'Desbloquear Usuario' : 'Bloquear Usuario',
+                  ),
                   onTap: () {
                     Navigator.of(context).pop();
                     if (isBlocked) {
@@ -223,16 +233,26 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     final userId = Supabase.instance.client.auth.currentUser?.id;
     return Scaffold(
-      backgroundColor: const Color(0xFF181A20),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF23242B),
         elevation: 0,
-        title: const Text('Fluteogram',
-            style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text(
+          'Fluteogram',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
         actions: [
           IconButton(
+            onPressed: () =>
+                Provider.of<ThemeProvider>(
+                  context,
+                  listen: false,
+                ).nextTheme(),
+            icon: const Icon(Icons.color_lens),
+            tooltip: 'Cambiar tema',
+          ),
+          IconButton(
             onPressed: _signOut,
-            icon: const Icon(Icons.logout, color: Colors.white70),
+            icon: const Icon(Icons.logout),
             tooltip: 'Cerrar sesión xd',
           ),
         ],
@@ -248,20 +268,35 @@ class _ChatScreenState extends State<ChatScreen> {
                 builder: (context, snapshot) {
                   if (snapshot.hasError) {
                     return Center(
-                      child: Text('¡Algo salió mal! ${snapshot.error}',
-                          style: const TextStyle(color: Colors.white70)),
+                      child: Text(
+                        '¡Algo salió mal! [${snapshot.error}',
+                        style: TextStyle(
+                          color: Theme.of(
+                            context,
+                          ).textTheme.bodyMedium?.color?.withOpacity(0.7),
+                        ),
+                      ),
                     );
                   }
                   if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                    return const Center(
-                        child: Text('Aún no hay mensajes.',
-                            style: TextStyle(color: Colors.white54)));
+                    return Center(
+                      child: Text(
+                        'Aún no hay mensajes.',
+                        style: TextStyle(
+                          color: Theme.of(
+                            context,
+                          ).textTheme.bodyMedium?.color?.withOpacity(0.54),
+                        ),
+                      ),
+                    );
                   }
                   final messages = snapshot.data!;
                   return ListView.builder(
-                    reverse: true, 
+                    reverse: true,
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 16),
+                      horizontal: 12,
+                      vertical: 16,
+                    ),
                     itemCount: messages.length,
                     itemBuilder: (context, index) {
                       final message = messages[index];
@@ -271,7 +306,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       final isBlocked = _blockedUserIds.contains(messageUserId);
 
                       if (isDeleted) {
-                        return const SizedBox.shrink(); 
+                        return const SizedBox.shrink();
                       }
 
                       if (isBlocked && !isMe) {
@@ -280,20 +315,29 @@ class _ChatScreenState extends State<ChatScreen> {
                           child: Align(
                             alignment: Alignment.centerLeft,
                             child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 4.0),
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 4.0,
+                              ),
                               child: Row(
                                 mainAxisAlignment: MainAxisAlignment.start,
                                 children: [
                                   CircleAvatar(
                                     radius: 18,
                                     backgroundColor: Colors.blueGrey.shade700,
-                                    child: const Icon(Icons.block, color: Colors.white70, size: 20),
+                                    child: const Icon(
+                                      Icons.block,
+                                      color: Colors.white70,
+                                      size: 20,
+                                    ),
                                   ),
                                   const SizedBox(width: 8),
                                   const Flexible(
                                     child: Text(
                                       'Mensaje de un usuario bloqueado',
-                                      style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
+                                      style: TextStyle(
+                                        color: Colors.grey,
+                                        fontStyle: FontStyle.italic,
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -307,57 +351,84 @@ class _ChatScreenState extends State<ChatScreen> {
                         onLongPress: () => _showMessageOptions(message),
                         child: Align(
                           alignment:
-                              isMe ? Alignment.centerRight : Alignment.centerLeft,
+                              isMe
+                                  ? Alignment.centerRight
+                                  : Alignment.centerLeft,
                           child: Padding(
                             padding: const EdgeInsets.symmetric(vertical: 4.0),
                             child: Row(
-                              mainAxisAlignment: isMe
-                                  ? MainAxisAlignment.end
-                                  : MainAxisAlignment.start,
+                              mainAxisAlignment:
+                                  isMe
+                                      ? MainAxisAlignment.end
+                                      : MainAxisAlignment.start,
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
                                 if (!isMe)
                                   CircleAvatar(
                                     radius: 18,
-                                    backgroundColor: Colors.blueGrey.shade700,
-                                    child: const Icon(Icons.person,
-                                        color: Colors.white70, size: 20),
+                                    backgroundColor:
+                                        Theme.of(context).colorScheme.secondary,
+                                    child: Icon(
+                                      Icons.person,
+                                      color:
+                                          Theme.of(context).iconTheme.color ??
+                                          Colors.white70,
+                                      size: 20,
+                                    ),
                                   ),
                                 if (!isMe) const SizedBox(width: 8),
                                 Flexible(
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(
-                                        horizontal: 16, vertical: 10),
+                                      horizontal: 16,
+                                      vertical: 10,
+                                    ),
                                     decoration: BoxDecoration(
-                                      color: isMe
-                                          ? const Color(0xFF4F5D75)
-                                          : const Color(0xFF23242B),
+                                      color:
+                                          isMe
+                                              ? Theme.of(
+                                                context,
+                                              ).colorScheme.primary
+                                              : Theme.of(
+                                                context,
+                                              ).colorScheme.secondary,
                                       borderRadius: BorderRadius.only(
                                         topLeft: const Radius.circular(18),
                                         topRight: const Radius.circular(18),
-                                        bottomLeft:
-                                            Radius.circular(isMe ? 18 : 4),
-                                        bottomRight:
-                                            Radius.circular(isMe ? 4 : 18),
+                                        bottomLeft: Radius.circular(
+                                          isMe ? 18 : 4,
+                                        ),
+                                        bottomRight: Radius.circular(
+                                          isMe ? 4 : 18,
+                                        ),
                                       ),
                                     ),
                                     child: Column(
-                                      crossAxisAlignment: isMe
-                                          ? CrossAxisAlignment.end
-                                          : CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          isMe
+                                              ? CrossAxisAlignment.end
+                                              : CrossAxisAlignment.start,
                                       children: [
                                         Text(
                                           message['content'],
-                                          style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 16),
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodyMedium
+                                              ?.copyWith(fontSize: 16),
                                         ),
                                         const SizedBox(height: 4),
                                         Text(
                                           '${_formatDate(message['created_at'])}${message['is_edited'] == true ? ' (editado)' : ''}',
-                                          style: const TextStyle(
-                                              color: Colors.white54,
-                                              fontSize: 12),
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.bodyMedium?.copyWith(
+                                            fontSize: 12,
+                                            color: Theme.of(context)
+                                                .textTheme
+                                                .bodyMedium
+                                                ?.color
+                                                ?.withOpacity(0.54),
+                                          ),
                                         ),
                                       ],
                                     ),
@@ -367,9 +438,15 @@ class _ChatScreenState extends State<ChatScreen> {
                                 if (isMe)
                                   CircleAvatar(
                                     radius: 18,
-                                    backgroundColor: Colors.blue.shade700,
-                                    child: const Icon(Icons.person,
-                                        color: Colors.white, size: 20),
+                                    backgroundColor:
+                                        Theme.of(context).colorScheme.primary,
+                                    child: Icon(
+                                      Icons.person,
+                                      color:
+                                          Theme.of(context).iconTheme.color ??
+                                          Colors.white,
+                                      size: 20,
+                                    ),
                                   ),
                               ],
                             ),
@@ -388,25 +465,41 @@ class _ChatScreenState extends State<ChatScreen> {
               bottom: 0,
               child: Container(
                 color: Colors.transparent,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
                 child: Row(
                   children: [
                     Expanded(
                       child: Container(
                         decoration: BoxDecoration(
-                          color: const Color(0xFF23242B),
+                          color: Theme.of(context).colorScheme.secondary,
                           borderRadius: BorderRadius.circular(24),
                         ),
                         child: TextFormField(
                           controller: _textController,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: const InputDecoration(
+                          style:
+                              Theme.of(context)
+                                  .textTheme
+                                  .bodyMedium, // Use the current theme's bodyMedium style
+                          decoration: InputDecoration(
+                            // Make InputDecoration non-const
                             hintText: 'Escribe un mensaje...',
-                            hintStyle: TextStyle(color: Colors.white54),
+                            hintStyle: Theme.of(
+                              context,
+                            ).textTheme.bodyMedium?.copyWith(
+                              color: Theme.of(context)
+                                  .textTheme
+                                  .bodyMedium
+                                  ?.color // Access color property
+                                  ?.withOpacity(0.54),
+                            ),
                             border: InputBorder.none,
-                            contentPadding: EdgeInsets.symmetric(
-                                horizontal: 20, vertical: 14),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 14,
+                            ),
                           ),
                           onFieldSubmitted: (_) => _sendMessage(),
                         ),
@@ -415,7 +508,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     const SizedBox(width: 8),
                     Container(
                       decoration: BoxDecoration(
-                        color: const Color(0xFF4F5D75),
+                        color: Theme.of(context).colorScheme.primary,
                         shape: BoxShape.circle,
                         boxShadow: [
                           BoxShadow(
@@ -426,7 +519,11 @@ class _ChatScreenState extends State<ChatScreen> {
                         ],
                       ),
                       child: IconButton(
-                        icon: const Icon(Icons.send, color: Colors.white),
+                        icon: Icon(
+                          Icons.send,
+                          color:
+                              Theme.of(context).iconTheme.color ?? Colors.white,
+                        ),
                         onPressed: _sendMessage,
                       ),
                     ),
