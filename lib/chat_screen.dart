@@ -144,12 +144,11 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // Function to "soft delete" a message
   Future<void> _deleteMessage(int messageId) async {
     try {
       await Supabase.instance.client
           .from('messages')
-          .update({'is_deleted': true}) // Set is_deleted to true
+          .delete()
           .match({'id': messageId});
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
