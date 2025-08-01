@@ -77,6 +77,7 @@ class _ChatScreenState extends State<ChatScreen> {
       await Supabase.instance.client
           .from('blocked_users')
           .insert({'blocker_id': blockerId, 'blocked_id': blockedId});
+      if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('Usuario bloqueado.')));
       _fetchBlockedUsers();
@@ -92,12 +93,55 @@ class _ChatScreenState extends State<ChatScreen> {
           .from('blocked_users')
           .delete()
           .match({'blocker_id': blockerId, 'blocked_id': blockedId});
+      if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('Usuario desbloqueado.')));
       _fetchBlockedUsers();
     } catch (e) {
       // Handle error
     }
+  }
+
+  Future<void> _editMessage(int messageId, String newContent) async {
+    if (newContent.isEmpty) return;
+    try {
+      await Supabase.instance.client
+          .from('messages')
+          .update({'content': newContent, 'is_edited': true})
+          .eq('id', messageId);
+    } catch (e) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Error al editar mensaje: $e')));
+    }
+  }
+
+  void _showEditMessageDialog(Map<String, dynamic> message) {
+    final editController = TextEditingController(text: message['content']);
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Editar Mensaje'),
+          content: TextField(
+            controller: editController,
+            autofocus: true,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancelar'),
+            ),
+            TextButton(
+              onPressed: () {
+                _editMessage(message['id'], editController.text.trim());
+                Navigator.of(context).pop();
+              },
+              child: const Text('Guardar'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   // Function to "soft delete" a message
@@ -119,8 +163,12 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  // Simplified options menu, only for blocking/unblocking
-  void _showMessageOptions(String userId, bool isBlocked) {
+  void _showMessageOptions(Map<String, dynamic> message) {
+    final isMyMessage =
+        message['user_id'] == Supabase.instance.client.auth.currentUser!.id;
+    final userId = message['user_id'] as String?;
+    final isBlocked = userId != null && _blockedUserIds.contains(userId);
+
     showModalBottomSheet(
       context: context,
       builder: (context) {
@@ -128,19 +176,38 @@ class _ChatScreenState extends State<ChatScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              ListTile(
-                leading: Icon(isBlocked ? Icons.lock_open : Icons.block),
-                title: Text(
-                    isBlocked ? 'Desbloquear Usuario' : 'Bloquear Usuario'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  if (isBlocked) {
-                    _unblockUser(userId);
-                  } else {
-                    _blockUser(userId);
-                  }
-                },
-              ),
+              if (isMyMessage)
+                ListTile(
+                  leading: const Icon(Icons.edit),
+                  title: const Text('Editar Mensaje'),
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    _showEditMessageDialog(message);
+                  },
+                ),
+              if (isMyMessage)
+                ListTile(
+                  leading: const Icon(Icons.delete),
+                  title: const Text('Eliminar Mensaje'),
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    _deleteMessage(message['id']);
+                  },
+                ),
+              if (!isMyMessage && userId != null)
+                ListTile(
+                  leading: Icon(isBlocked ? Icons.lock_open : Icons.block),
+                  title: Text(
+                      isBlocked ? 'Desbloquear Usuario' : 'Bloquear Usuario'),
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    if (isBlocked) {
+                      _unblockUser(userId);
+                    } else {
+                      _blockUser(userId);
+                    }
+                  },
+                ),
             ],
           ),
         );
@@ -161,7 +228,8 @@ class _ChatScreenState extends State<ChatScreen> {
       appBar: AppBar(
         backgroundColor: const Color(0xFF23242B),
         elevation: 0,
-        title: const Text('Fluteogram', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text('Fluteogram',
+            style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
           IconButton(
             onPressed: _signOut,
@@ -181,71 +249,131 @@ class _ChatScreenState extends State<ChatScreen> {
                 builder: (context, snapshot) {
                   if (snapshot.hasError) {
                     return Center(
-                      child: Text('¡Algo salió mal! ${snapshot.error}', style: const TextStyle(color: Colors.white70)),
+                      child: Text('¡Algo salió mal! ${snapshot.error}',
+                          style: const TextStyle(color: Colors.white70)),
                     );
                   }
                   if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                    return const Center(child: Text('Aún no hay mensajes.', style: TextStyle(color: Colors.white54)));
+                    return const Center(
+                        child: Text('Aún no hay mensajes.',
+                            style: TextStyle(color: Colors.white54)));
                   }
                   final messages = snapshot.data!;
                   return ListView.builder(
-                    reverse: true, //si se coloca en false, los mensajes se mostrarán al revés (los más viejos abajo)
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                    reverse: true, 
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 16),
                     itemCount: messages.length,
                     itemBuilder: (context, index) {
                       final message = messages[index];
-                      final isMe = message['user_id'] == userId;
-                      return Align(
-                        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4.0),
-                          child: Row(
-                            mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              if (!isMe)
-                                CircleAvatar(
-                                  radius: 18,
-                                  backgroundColor: Colors.blueGrey.shade700,
-                                  child: const Icon(Icons.person, color: Colors.white70, size: 20),
-                                ),
-                              if (!isMe) const SizedBox(width: 8),
-                              Flexible(
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                                  decoration: BoxDecoration(
-                                    color: isMe ? const Color(0xFF4F5D75) : const Color(0xFF23242B),
-                                    borderRadius: BorderRadius.only(
-                                      topLeft: const Radius.circular(18),
-                                      topRight: const Radius.circular(18),
-                                      bottomLeft: Radius.circular(isMe ? 18 : 4),
-                                      bottomRight: Radius.circular(isMe ? 4 : 18),
+                      final messageUserId = message['user_id'];
+                      final isMe = messageUserId == userId;
+                      final isDeleted = message['is_deleted'] == true;
+                      final isBlocked = _blockedUserIds.contains(messageUserId);
+
+                      if (isDeleted) {
+                        return const SizedBox.shrink(); 
+                      }
+
+                      if (isBlocked && !isMe) {
+                        return GestureDetector(
+                          onLongPress: () => _showMessageOptions(message),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 4.0),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.start,
+                                children: [
+                                  CircleAvatar(
+                                    radius: 18,
+                                    backgroundColor: Colors.blueGrey.shade700,
+                                    child: const Icon(Icons.block, color: Colors.white70, size: 20),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  const Flexible(
+                                    child: Text(
+                                      'Mensaje de un usuario bloqueado',
+                                      style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
                                     ),
                                   ),
-                                  child: Column(
-                                    crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        message['content'],
-                                        style: const TextStyle(color: Colors.white, fontSize: 16),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      }
+
+                      return GestureDetector(
+                        onLongPress: () => _showMessageOptions(message),
+                        child: Align(
+                          alignment:
+                              isMe ? Alignment.centerRight : Alignment.centerLeft,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4.0),
+                            child: Row(
+                              mainAxisAlignment: isMe
+                                  ? MainAxisAlignment.end
+                                  : MainAxisAlignment.start,
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                if (!isMe)
+                                  CircleAvatar(
+                                    radius: 18,
+                                    backgroundColor: Colors.blueGrey.shade700,
+                                    child: const Icon(Icons.person,
+                                        color: Colors.white70, size: 20),
+                                  ),
+                                if (!isMe) const SizedBox(width: 8),
+                                Flexible(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 16, vertical: 10),
+                                    decoration: BoxDecoration(
+                                      color: isMe
+                                          ? const Color(0xFF4F5D75)
+                                          : const Color(0xFF23242B),
+                                      borderRadius: BorderRadius.only(
+                                        topLeft: const Radius.circular(18),
+                                        topRight: const Radius.circular(18),
+                                        bottomLeft:
+                                            Radius.circular(isMe ? 18 : 4),
+                                        bottomRight:
+                                            Radius.circular(isMe ? 4 : 18),
                                       ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        _formatDate(message['created_at']),
-                                        style: const TextStyle(color: Colors.white54, fontSize: 12),
-                                      ),
-                                    ],
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: isMe
+                                          ? CrossAxisAlignment.end
+                                          : CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          message['content'],
+                                          style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 16),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          '${_formatDate(message['created_at'])}${message['is_edited'] == true ? ' (editado)' : ''}',
+                                          style: const TextStyle(
+                                              color: Colors.white54,
+                                              fontSize: 12),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ),
-                              ),
-                              if (isMe) const SizedBox(width: 8),
-                              if (isMe)
-                                CircleAvatar(
-                                  radius: 18,
-                                  backgroundColor: Colors.blue.shade700,
-                                  child: const Icon(Icons.person, color: Colors.white, size: 20),
-                                ),
-                            ],
+                                if (isMe) const SizedBox(width: 8),
+                                if (isMe)
+                                  CircleAvatar(
+                                    radius: 18,
+                                    backgroundColor: Colors.blue.shade700,
+                                    child: const Icon(Icons.person,
+                                        color: Colors.white, size: 20),
+                                  ),
+                              ],
+                            ),
                           ),
                         ),
                       );
@@ -261,7 +389,8 @@ class _ChatScreenState extends State<ChatScreen> {
               bottom: 0,
               child: Container(
                 color: Colors.transparent,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 child: Row(
                   children: [
                     Expanded(
@@ -277,7 +406,8 @@ class _ChatScreenState extends State<ChatScreen> {
                             hintText: 'Escribe un mensaje...',
                             hintStyle: TextStyle(color: Colors.white54),
                             border: InputBorder.none,
-                            contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                            contentPadding: EdgeInsets.symmetric(
+                                horizontal: 20, vertical: 14),
                           ),
                           onFieldSubmitted: (_) => _sendMessage(),
                         ),
@@ -286,7 +416,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     const SizedBox(width: 8),
                     Container(
                       decoration: BoxDecoration(
-                        color: Color(0xFF4F5D75),
+                        color: const Color(0xFF4F5D75),
                         shape: BoxShape.circle,
                         boxShadow: [
                           BoxShadow(
