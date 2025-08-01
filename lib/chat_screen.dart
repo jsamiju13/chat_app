@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:chat_app/splash_screen.dart';
+import 'package:provider/provider.dart';
+import 'package:chat_app/theme.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -73,15 +75,23 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     final userId = Supabase.instance.client.auth.currentUser?.id;
     return Scaffold(
-      backgroundColor: const Color(0xFF181A20),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF23242B),
         elevation: 0,
-        title: const Text('Fluteogram', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text(
+          'Fluteogram',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
         actions: [
           IconButton(
+            onPressed: () =>
+                Provider.of<ThemeProvider>(context, listen: false).nextTheme(),
+            icon: const Icon(Icons.color_lens),
+            tooltip: 'Cambiar tema',
+          ),
+          IconButton(
             onPressed: _signOut,
-            icon: const Icon(Icons.logout, color: Colors.white70),
+            icon: const Icon(Icons.logout),
             tooltip: 'Cerrar sesión xd',
           ),
         ],
@@ -97,58 +107,115 @@ class _ChatScreenState extends State<ChatScreen> {
                 builder: (context, snapshot) {
                   if (snapshot.hasError) {
                     return Center(
-                      child: Text('¡Algo salió mal! ${snapshot.error}', style: const TextStyle(color: Colors.white70)),
+                      child: Text(
+                        '¡Algo salió mal! [${snapshot.error}',
+                        style: TextStyle(
+                          color: Theme.of(
+                            context,
+                          ).textTheme.bodyMedium?.color?.withOpacity(0.7),
+                        ),
+                      ),
                     );
                   }
                   if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                    return const Center(child: Text('Aún no hay mensajes.', style: TextStyle(color: Colors.white54)));
+                    return Center(
+                      child: Text(
+                        'Aún no hay mensajes.',
+                        style: TextStyle(
+                          color: Theme.of(
+                            context,
+                          ).textTheme.bodyMedium?.color?.withOpacity(0.54),
+                        ),
+                      ),
+                    );
                   }
                   final messages = snapshot.data!;
                   return ListView.builder(
-                    reverse: true, //si se coloca en false, los mensajes se mostrarán al revés (los más viejos abajo)
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                    reverse: true,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 16,
+                    ),
                     itemCount: messages.length,
                     itemBuilder: (context, index) {
                       final message = messages[index];
                       final isMe = message['user_id'] == userId;
                       return Align(
-                        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+                        alignment: isMe
+                            ? Alignment.centerRight
+                            : Alignment.centerLeft,
                         child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 4.0),
                           child: Row(
-                            mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+                            mainAxisAlignment: isMe
+                                ? MainAxisAlignment.end
+                                : MainAxisAlignment.start,
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
                               if (!isMe)
                                 CircleAvatar(
                                   radius: 18,
-                                  backgroundColor: Colors.blueGrey.shade700,
-                                  child: const Icon(Icons.person, color: Colors.white70, size: 20),
+                                  backgroundColor: Theme.of(
+                                    context,
+                                  ).colorScheme.secondary,
+                                  child: Icon(
+                                    Icons.person,
+                                    color:
+                                        Theme.of(context).iconTheme.color ??
+                                        Colors.white70,
+                                    size: 20,
+                                  ),
                                 ),
                               if (!isMe) const SizedBox(width: 8),
                               Flexible(
                                 child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 10,
+                                  ),
                                   decoration: BoxDecoration(
-                                    color: isMe ? const Color(0xFF4F5D75) : const Color(0xFF23242B),
+                                    color: isMe
+                                        ? Theme.of(context).colorScheme.primary
+                                        : Theme.of(
+                                            context,
+                                          ).colorScheme.secondary,
                                     borderRadius: BorderRadius.only(
                                       topLeft: const Radius.circular(18),
                                       topRight: const Radius.circular(18),
-                                      bottomLeft: Radius.circular(isMe ? 18 : 4),
-                                      bottomRight: Radius.circular(isMe ? 4 : 18),
+                                      bottomLeft: Radius.circular(
+                                        isMe ? 18 : 4,
+                                      ),
+                                      bottomRight: Radius.circular(
+                                        isMe ? 4 : 18,
+                                      ),
                                     ),
                                   ),
                                   child: Column(
-                                    crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                                    crossAxisAlignment: isMe
+                                        ? CrossAxisAlignment.end
+                                        : CrossAxisAlignment.start,
                                     children: [
                                       Text(
                                         message['content'],
-                                        style: const TextStyle(color: Colors.white, fontSize: 16),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodyMedium
+                                            ?.copyWith(fontSize: 16),
                                       ),
                                       const SizedBox(height: 4),
                                       Text(
                                         _formatDate(message['created_at']),
-                                        style: const TextStyle(color: Colors.white54, fontSize: 12),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodyMedium
+                                            ?.copyWith(
+                                              fontSize: 12,
+                                              color: Theme.of(context)
+                                                  .textTheme
+                                                  .bodyMedium
+                                                  ?.color
+                                                  ?.withOpacity(0.54),
+                                            ),
                                       ),
                                     ],
                                   ),
@@ -158,8 +225,16 @@ class _ChatScreenState extends State<ChatScreen> {
                               if (isMe)
                                 CircleAvatar(
                                   radius: 18,
-                                  backgroundColor: Colors.blue.shade700,
-                                  child: const Icon(Icons.person, color: Colors.white, size: 20),
+                                  backgroundColor: Theme.of(
+                                    context,
+                                  ).colorScheme.primary,
+                                  child: Icon(
+                                    Icons.person,
+                                    color:
+                                        Theme.of(context).iconTheme.color ??
+                                        Colors.white,
+                                    size: 20,
+                                  ),
                                 ),
                             ],
                           ),
@@ -177,23 +252,36 @@ class _ChatScreenState extends State<ChatScreen> {
               bottom: 0,
               child: Container(
                 color: Colors.transparent,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
                 child: Row(
                   children: [
                     Expanded(
                       child: Container(
                         decoration: BoxDecoration(
-                          color: const Color(0xFF23242B),
+                          color: Theme.of(context).colorScheme.secondary,
                           borderRadius: BorderRadius.circular(24),
                         ),
                         child: TextFormField(
                           controller: _textController,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: const InputDecoration(
+                          style: Theme.of(context).textTheme.bodyMedium,
+                          decoration: InputDecoration(
                             hintText: 'Escribe un mensaje...',
-                            hintStyle: TextStyle(color: Colors.white54),
+                            hintStyle: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(
+                                  color: Theme.of(context)
+                                      .textTheme
+                                      .bodyMedium
+                                      ?.color
+                                      ?.withOpacity(0.54),
+                                ),
                             border: InputBorder.none,
-                            contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 14,
+                            ),
                           ),
                           onFieldSubmitted: (_) => _sendMessage(),
                         ),
@@ -202,7 +290,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     const SizedBox(width: 8),
                     Container(
                       decoration: BoxDecoration(
-                        color: Color(0xFF4F5D75),
+                        color: Theme.of(context).colorScheme.primary,
                         shape: BoxShape.circle,
                         boxShadow: [
                           BoxShadow(
@@ -213,7 +301,11 @@ class _ChatScreenState extends State<ChatScreen> {
                         ],
                       ),
                       child: IconButton(
-                        icon: const Icon(Icons.send, color: Colors.white),
+                        icon: Icon(
+                          Icons.send,
+                          color:
+                              Theme.of(context).iconTheme.color ?? Colors.white,
+                        ),
                         onPressed: _sendMessage,
                       ),
                     ),
