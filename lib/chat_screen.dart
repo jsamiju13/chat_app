@@ -294,8 +294,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
+      // Si reverse: true, el último mensaje está en minScrollExtent
       _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
+        _scrollController.position.minScrollExtent,
         duration: const Duration(milliseconds: 400),
         curve: Curves.easeOut,
       );
