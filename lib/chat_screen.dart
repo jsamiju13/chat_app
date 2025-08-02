@@ -211,6 +211,10 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final _textController = TextEditingController();
+  final _searchController = TextEditingController();
+  String _searchType = 'texto'; // 'texto' o 'usuario'
+  String _searchTerm = '';
+  final ScrollController _scrollController = ScrollController();
   final _messagesStream = Supabase.instance.client
       .from('messages')
       .stream(primaryKey: ['id'])
@@ -218,7 +222,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // Stream para el indicador de escritura
   late final Stream<List<Map<String, dynamic>>> _typingStream;
-  // String? _typingUsername; // Eliminada porque no se usa
   bool _isTyping = false;
 
   @override
@@ -231,12 +234,18 @@ class _ChatScreenState extends State<ChatScreen> {
     _textController.addListener(_handleTyping);
     // Asegura el registro typing_status al entrar
     WidgetsBinding.instance.addPostFrameCallback((_) => _ensureTypingStatusExists());
+    // Scroll al último mensaje al abrir
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollToBottom();
+    });
   }
 
   @override
   void dispose() {
     _textController.removeListener(_handleTyping);
     _textController.dispose();
+    _searchController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -274,11 +283,22 @@ class _ChatScreenState extends State<ChatScreen> {
       });
       if (!mounted) return; // <-- Agrega esto
       _textController.clear();
+      // Scroll al último mensaje después de enviar
+      Future.delayed(const Duration(milliseconds: 300), _scrollToBottom);
     } catch (e) {
       if (!mounted) return; // <-- Agrega esto
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Error al enviar mensaje: $e')));
+    }
+  }
+  void _scrollToBottom() {
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeOut,
+      );
     }
   }
 
@@ -349,6 +369,53 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       body: Column(
         children: [
+          // Buscador de mensajes
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: const InputDecoration(
+                      hintText: 'Buscar mensajes...',
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: (value) {
+                      setState(() {
+                        _searchTerm = value.trim();
+                      });
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                DropdownButton<String>(
+                  value: _searchType,
+                  items: const [
+                    DropdownMenuItem(value: 'texto', child: Text('Texto')),
+                    DropdownMenuItem(value: 'usuario', child: Text('Usuario')),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) {
+                      setState(() {
+                        _searchType = value;
+                      });
+                    }
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.clear),
+                  tooltip: 'Limpiar búsqueda',
+                  onPressed: () {
+                    setState(() {
+                      _searchController.clear();
+                      _searchTerm = '';
+                    });
+                  },
+                ),
+              ],
+            ),
+          ),
           // Indicador de escritura
           StreamBuilder<List<Map<String, dynamic>>>(
             stream: _typingStream,
@@ -393,8 +460,25 @@ class _ChatScreenState extends State<ChatScreen> {
                 if (!snapshot.hasData || snapshot.data!.isEmpty) {
                   return const Center(child: Text('Aún no hay mensajes.'));
                 }
-                final messages = snapshot.data!;
+                var messages = snapshot.data!;
+                // Filtrado de mensajes por búsqueda
+                if (_searchTerm.isNotEmpty) {
+                  if (_searchType == 'texto') {
+                    messages = messages.where((msg) => (msg['content'] as String?)?.toLowerCase().contains(_searchTerm.toLowerCase()) ?? false).toList();
+                  } else if (_searchType == 'usuario') {
+                    messages = messages.where((msg) {
+                      final userId = msg['user_id'] as String?;
+                      if (userId == null) return false;
+                      final cached = _profileCache[userId];
+                      if (cached != null && cached['username'] != null) {
+                        return (cached['username'] as String).toLowerCase().contains(_searchTerm.toLowerCase());
+                      }
+                      return false;
+                    }).toList();
+                  }
+                }
                 return ListView.builder(
+                  controller: _scrollController,
                   reverse: true,
                   itemCount: messages.length,
                   itemBuilder: (context, index) {
