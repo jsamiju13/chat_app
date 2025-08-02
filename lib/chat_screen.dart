@@ -354,19 +354,27 @@ class _ChatScreenState extends State<ChatScreen> {
             stream: _typingStream,
             builder: (context, snapshot) {
               if (snapshot.hasData && snapshot.data!.isNotEmpty) {
-                // Filtra para mostrar solo otros usuarios escribiendo
                 final userId = Supabase.instance.client.auth.currentUser?.id;
                 final typingUsers = snapshot.data!
                     .where((row) => row['user_id'] != userId)
                     .toList();
                 if (typingUsers.isNotEmpty) {
                   // Solo muestra el primero (puedes mostrar todos si quieres)
-                  return Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: Text(
-                      '💬 ${typingUsers.length == 1 ? "${typingUsers[0]['user_id']} está escribiendo..." : "Alguien está escribiendo..."}',
-                      style: const TextStyle(color: Colors.deepPurple, fontStyle: FontStyle.italic),
-                    ),
+                  final typingUserId = typingUsers[0]['user_id'] as String;
+                  return FutureBuilder<Map<String, dynamic>>(
+                    future: getUserProfile(typingUserId),
+                    builder: (context, profileSnapshot) {
+                      final username = profileSnapshot.data != null
+                          ? profileSnapshot.data!['username'] ?? 'Alguien'
+                          : 'Alguien';
+                      return Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Text(
+                          '💬 $username está escribiendo...',
+                          style: const TextStyle(color: Colors.deepPurple, fontStyle: FontStyle.italic),
+                        ),
+                      );
+                    },
                   );
                 }
               }
