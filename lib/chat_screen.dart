@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:chat_app/splash_screen.dart';
+import 'package:provider/provider.dart';
+import 'package:chat_app/theme.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -8,12 +11,56 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
+class MessageCensor {
+  // ... (Esta clase no tenía conflictos y se mantiene igual)
+  static List<String>? _cachedBlacklist;
+  static DateTime? _lastUpdated;
+
+  static Future<void> _loadWords() async {
+    final now = DateTime.now();
+    if (_cachedBlacklist == null || _lastUpdated == null || now.difference(_lastUpdated!).inMinutes >= 5) {
+      try {
+        final response = await Supabase.instance.client.from('blocked_words').select('word');
+        _cachedBlacklist = (response as List).map((item) => item['word'] as String).toList();
+        _lastUpdated = now;
+      } catch (e) {
+        _cachedBlacklist = [];
+      }
+    }
+  }
+
+  static Future<String> censorMessage(String message) async {
+    await _loadWords();
+    String censored = message;
+    final blacklist = _cachedBlacklist ?? [];
+
+    if (blacklist.isEmpty) return message;
+
+    for (final word in blacklist) {
+      final regex = RegExp(r'\b' + RegExp.escape(word) + r'\b', caseSensitive: false);
+      censored = censored.replaceAllMapped(regex, (match) {
+        return '*' * match.group(0)!.length;
+      });
+    }
+    return censored;
+  }
+}
+
 class _ChatScreenState extends State<ChatScreen> {
   final _textController = TextEditingController();
-  final _messagesStream = Supabase.instance.client
-      .from('messages')
-      .stream(primaryKey: ['id'])
-      .order('created_at');
+  late final Stream<List<Map<String, dynamic>>> _messagesStream;
+  Set<String> _blockedUserIds = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchBlockedUsers();
+    MessageCensor._loadWords();
+    _messagesStream = Supabase.instance.client
+        .from('messages')
+        .stream(primaryKey: ['id'])
+        .order('created_at', ascending: false);
+  }
 
   @override
   void dispose() {
@@ -21,41 +68,199 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
+  Future<void> _fetchBlockedUsers() async {
+    final userId = Supabase.instance.client.auth.currentUser!.id;
+    try {
+      final response = await Supabase.instance.client
+          .from('blocked_users')
+          .select('blocked_id')
+          .eq('blocker_id', userId);
+      final blockedUsers = (response as List).map((item) => item['blocked_id'] as String).toSet();
+      if (mounted) {
+        setState(() {
+          _blockedUserIds = blockedUsers;
+        });
+      }
+    } catch (e) {
+      // Manejar error si es necesario
+    }
+  }
+
+  // Se usa la versión de 'interfaz-moderacion' con .trim()
   Future<void> _sendMessage() async {
-    if (_textController.text.isEmpty) return;
+    final content = _textController.text.trim();
+    if (content.isEmpty) return;
 
     try {
       final userId = Supabase.instance.client.auth.currentUser!.id;
       await Supabase.instance.client.from('messages').insert({
-        'content': _textController.text.trim(),
+        'content': content,
         'user_id': userId,
       });
       _textController.clear();
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error al enviar mensaje: $e'))
+        SnackBar(content: Text('Error al enviar mensaje: $e')),
       );
     }
   }
 
+  // Se mantiene la función de cerrar sesión completa
   Future<void> _signOut() async {
     try {
       await Supabase.instance.client.auth.signOut();
-      // NO NAVEGUES MANUALMENTE - El SplashScreen se encargará automáticamente
-      // cuando detecte que el usuario ya no está autenticado
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const SplashScreen()));
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error al cerrar sesión: $e'))
+        SnackBar(content: Text('Error al cerrar sesión: $e')),
       );
     }
   }
+  
+  // A partir de aquí, se usa todo el bloque de 'interfaz-moderacion'
+  // que incluye todas las nuevas funcionalidades de moderación y edición.
+  Future<void> _blockUser(String blockedId) async {
+    final blockerId = Supabase.instance.client.auth.currentUser!.id;
+    try {
+      await Supabase.instance.client.from('blocked_users').insert({
+        'blocker_id': blockerId,
+        'blocked_id': blockedId,
+      });
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Usuario bloqueado.')));
+      _fetchBlockedUsers();
+    } catch (e) {
+      // Manejar error si es necesario
+    }
+  }
 
+  Future<void> _unblockUser(String blockedId) async {
+    final blockerId = Supabase.instance.client.auth.currentUser!.id;
+    try {
+      await Supabase.instance.client.from('blocked_users').delete().match({
+        'blocker_id': blockerId,
+        'blocked_id': blockedId,
+      });
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Usuario desbloqueado.')));
+      _fetchBlockedUsers();
+    } catch (e) {
+      // Manejar error si es necesario
+    }
+  }
+
+  Future<void> _editMessage(int messageId, String newContent) async {
+    if (newContent.isEmpty) return;
+    try {
+      await Supabase.instance.client
+          .from('messages')
+          .update({'content': newContent, 'is_edited': true})
+          .eq('id', messageId);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error al editar mensaje: $e')));
+    }
+  }
+
+  void _showEditMessageDialog(Map<String, dynamic> message) {
+    final editController = TextEditingController(text: message['content']);
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Editar Mensaje'),
+          content: TextField(controller: editController, autofocus: true),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancelar'),
+            ),
+            TextButton(
+              onPressed: () {
+                _editMessage(message['id'], editController.text.trim());
+                Navigator.of(context).pop();
+              },
+              child: const Text('Guardar'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _deleteMessage(int messageId) async {
+    try {
+      await Supabase.instance.client.from('messages').delete().match({'id': messageId});
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Mensaje eliminado.')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al eliminar el mensaje: $e')),
+        );
+      }
+    }
+  }
+
+  void _showMessageOptions(Map<String, dynamic> message) {
+    final isMyMessage = message['user_id'] == Supabase.instance.client.auth.currentUser!.id;
+    final userId = message['user_id'] as String?;
+    final isBlocked = userId != null && _blockedUserIds.contains(userId);
+
+    showModalBottomSheet(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isMyMessage)
+                ListTile(
+                  leading: const Icon(Icons.edit),
+                  title: const Text('Editar Mensaje'),
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    _showEditMessageDialog(message);
+                  },
+                ),
+              if (isMyMessage)
+                ListTile(
+                  leading: const Icon(Icons.delete),
+                  title: const Text('Eliminar Mensaje'),
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    _deleteMessage(message['id']);
+                  },
+                ),
+              if (!isMyMessage && userId != null)
+                ListTile(
+                  leading: Icon(isBlocked ? Icons.lock_open : Icons.block),
+                  title: Text(isBlocked ? 'Desbloquear Usuario' : 'Bloquear Usuario'),
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    if (isBlocked) {
+                      _unblockUser(userId);
+                    } else {
+                      _blockUser(userId);
+                    }
+                  },
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // Se usa la versión de 'Autenticacion' que es más completa.
   String _formatDate(String isoDate) {
     final date = DateTime.parse(isoDate).toLocal();
     final now = DateTime.now();
-    final isToday = date.year == now.year &&
-                   date.month == now.month &&
-                   date.day == now.day;
+    final isToday = date.year == now.year && date.month == now.month && date.day == now.day;
 
     final hourMinute = '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
 
@@ -71,10 +276,19 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Se usa la UI completa y moderna de 'interfaz-moderacion'
+    final userId = Supabase.instance.client.auth.currentUser?.id;
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text('Chat en Tiempo Real'),
+        elevation: 0,
+        title: const Text('Fluteogram', style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
+          IconButton(
+            onPressed: () => Provider.of<ThemeProvider>(context, listen: false).nextTheme(),
+            icon: const Icon(Icons.color_lens),
+            tooltip: 'Cambiar tema',
+          ),
           IconButton(
             onPressed: _signOut,
             icon: const Icon(Icons.logout),
@@ -82,59 +296,181 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: StreamBuilder<List<Map<String, dynamic>>>(
-              stream: _messagesStream,
-              builder: (context, snapshot) {
-                if (snapshot.hasError) {
-                  return Center(
-                    child: Text('¡Algo salió mal! ${snapshot.error}'),
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(bottom: 70), // Espacio para la caja de texto
+              child: StreamBuilder<List<Map<String, dynamic>>>(
+                stream: _messagesStream,
+                builder: (context, snapshot) {
+                  if (snapshot.hasError) {
+                    return Center(child: Text('¡Algo salió mal! ${snapshot.error}'));
+                  }
+                  if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                    return const Center(child: Text('Aún no hay mensajes.'));
+                  }
+                  final messages = snapshot.data!;
+                  return ListView.builder(
+                    reverse: true,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                    itemCount: messages.length,
+                    itemBuilder: (context, index) {
+                      final message = messages[index];
+                      final messageUserId = message['user_id'];
+                      final isMe = messageUserId == userId;
+                      final isDeleted = message['is_deleted'] == true;
+                      final isBlocked = _blockedUserIds.contains(messageUserId);
+
+                      if (isDeleted) return const SizedBox.shrink();
+
+                      if (isBlocked && !isMe) {
+                        return GestureDetector(
+                          onLongPress: () => _showMessageOptions(message),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 4.0),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.start,
+                                children: [
+                                  CircleAvatar(
+                                    radius: 18,
+                                    backgroundColor: Colors.blueGrey.shade700,
+                                    child: const Icon(Icons.block, color: Colors.white70, size: 20),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  const Flexible(
+                                    child: Text(
+                                      'Mensaje de un usuario bloqueado',
+                                      style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      }
+
+                      return GestureDetector(
+                        onLongPress: () => _showMessageOptions(message),
+                        child: Align(
+                          alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4.0),
+                            child: Row(
+                              mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                if (!isMe)
+                                  CircleAvatar(
+                                    radius: 18,
+                                    backgroundColor: Theme.of(context).colorScheme.secondary,
+                                    child: Icon(Icons.person, color: Theme.of(context).iconTheme.color, size: 20),
+                                  ),
+                                if (!isMe) const SizedBox(width: 8),
+                                Flexible(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                    decoration: BoxDecoration(
+                                      color: isMe
+                                          ? Theme.of(context).colorScheme.primary
+                                          : Theme.of(context).colorScheme.secondary,
+                                      borderRadius: BorderRadius.only(
+                                        topLeft: const Radius.circular(18),
+                                        topRight: const Radius.circular(18),
+                                        bottomLeft: Radius.circular(isMe ? 18 : 4),
+                                        bottomRight: Radius.circular(isMe ? 4 : 18),
+                                      ),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                                      children: [
+                                        FutureBuilder<String>(
+                                          future: MessageCensor.censorMessage(message['content']),
+                                          builder: (context, snapshot) {
+                                            final censoredContent = snapshot.data ?? message['content'];
+                                            return Text(
+                                              censoredContent,
+                                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 16),
+                                            );
+                                          },
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          '${_formatDate(message['created_at'])}${message['is_edited'] == true ? ' (editado)' : ''}',
+                                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                            fontSize: 12,
+                                            color: Theme.of(context).textTheme.bodyMedium?.color?.withOpacity(0.7),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                if (isMe) const SizedBox(width: 8),
+                                if (isMe)
+                                  CircleAvatar(
+                                    radius: 18,
+                                    backgroundColor: Theme.of(context).colorScheme.primary,
+                                    child: Icon(Icons.person, color: Theme.of(context).iconTheme.color, size: 20),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                   );
-                }
-
-                if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                  return const Center(child: Text('Aún no hay mensajes.'));
-                }
-
-                final messages = snapshot.data!;
-                return ListView.builder(
-                  reverse: true,
-                  itemCount: messages.length,
-                  itemBuilder: (context, index) {
-                    final message = messages[index];
-                    return ListTile(
-                      title: Text(message['content']),
-                      subtitle: Text("${_formatDate(message['created_at'])}"),
-                    );
-                  },
-                );
-              },
+                },
+              ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextFormField(
-                    controller: _textController,
-                    decoration: const InputDecoration(
-                      hintText: 'Escribe un mensaje...',
-                      border: OutlineInputBorder(),
+            Positioned(
+              left: 0, right: 0, bottom: 0,
+              child: Container(
+                color: Colors.transparent, // Fondo del Stack, no de la caja de texto
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.secondary,
+                          borderRadius: BorderRadius.circular(24),
+                        ),
+                        child: TextFormField(
+                          controller: _textController,
+                          style: Theme.of(context).textTheme.bodyMedium,
+                          decoration: InputDecoration(
+                            hintText: 'Escribe un mensaje...',
+                            hintStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: Theme.of(context).textTheme.bodyMedium?.color?.withOpacity(0.6),
+                            ),
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                          ),
+                          onFieldSubmitted: (_) => _sendMessage(),
+                        ),
+                      ),
                     ),
-                    onFieldSubmitted: (_) => _sendMessage(),
-                  ),
+                    const SizedBox(width: 8),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primary,
+                        shape: BoxShape.circle,
+                      ),
+                      child: IconButton(
+                        icon: Icon(Icons.send, color: Theme.of(context).iconTheme.color),
+                        onPressed: _sendMessage,
+                      ),
+                    ),
+                  ],
                 ),
-                IconButton(
-                  icon: const Icon(Icons.send),
-                  onPressed: _sendMessage,
-                ),
-              ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
