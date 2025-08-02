@@ -4,6 +4,27 @@ import 'package:chat_app/splash_screen.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+// Asegura que el registro de typing_status exista para el usuario
+Future<void> _ensureTypingStatusExists() async {
+  final userId = Supabase.instance.client.auth.currentUser?.id;
+  if (userId == null) return;
+  try {
+    // Intenta obtener el registro
+    final response = await Supabase.instance.client
+        .from('typing_status')
+        .select('id')
+        .eq('user_id', userId)
+        .maybeSingle();
+    if (response == null || response.isEmpty) {
+      // Si no existe, lo crea
+      await Supabase.instance.client.from('typing_status').insert({
+        'user_id': userId,
+        'is_typing': false,
+        'updated_at': DateTime.now().toIso8601String(),
+      });
+    }
+  } catch (_) {}
+}
 // Función para obtener el perfil de usuario desde Supabase
 Future<Map<String, dynamic>> getUserProfile(String userId) async {
   final response = await Supabase.instance.client
@@ -208,6 +229,8 @@ class _ChatScreenState extends State<ChatScreen> {
         .stream(primaryKey: ['id'])
         .eq('is_typing', true);
     _textController.addListener(_handleTyping);
+    // Asegura el registro typing_status al entrar
+    WidgetsBinding.instance.addPostFrameCallback((_) => _ensureTypingStatusExists());
   }
 
   @override
