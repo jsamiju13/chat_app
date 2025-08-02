@@ -195,11 +195,51 @@ class _ChatScreenState extends State<ChatScreen> {
       .stream(primaryKey: ['id'])
       .order('created_at');
 
+  // Stream para el indicador de escritura
+  late final Stream<List<Map<String, dynamic>>> _typingStream;
+  // String? _typingUsername; // Eliminada porque no se usa
+  bool _isTyping = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _typingStream = Supabase.instance.client
+        .from('typing_status')
+        .stream(primaryKey: ['id'])
+        .eq('is_typing', true);
+    _textController.addListener(_handleTyping);
+  }
+
   @override
   void dispose() {
+    _textController.removeListener(_handleTyping);
     _textController.dispose();
     super.dispose();
   }
+
+  // Actualiza el estado de escritura del usuario
+  Future<void> _updateTypingStatus(bool typing) async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return;
+    try {
+      await Supabase.instance.client.from('typing_status').upsert({
+        'user_id': userId,
+        'is_typing': typing,
+        'updated_at': DateTime.now().toIso8601String(),
+      });
+    } catch (_) {}
+  }
+
+  // Detecta si el usuario está escribiendo
+  void _handleTyping() {
+    final isNowTyping = _textController.text.isNotEmpty;
+    if (_isTyping != isNowTyping) {
+      _isTyping = isNowTyping;
+      _updateTypingStatus(_isTyping);
+    }
+  }
+
+  // Elimina el segundo dispose duplicado
 
   Future<void> _sendMessage() async {
     if (_textController.text.isEmpty) return;
@@ -209,8 +249,10 @@ class _ChatScreenState extends State<ChatScreen> {
         'content': _textController.text.trim(),
         'user_id': userId,
       });
+      if (!mounted) return; // <-- Agrega esto
       _textController.clear();
     } catch (e) {
+      if (!mounted) return; // <-- Agrega esto
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Error al enviar mensaje: $e')));
@@ -284,6 +326,30 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       body: Column(
         children: [
+          // Indicador de escritura
+          StreamBuilder<List<Map<String, dynamic>>>(
+            stream: _typingStream,
+            builder: (context, snapshot) {
+              if (snapshot.hasData && snapshot.data!.isNotEmpty) {
+                // Filtra para mostrar solo otros usuarios escribiendo
+                final userId = Supabase.instance.client.auth.currentUser?.id;
+                final typingUsers = snapshot.data!
+                    .where((row) => row['user_id'] != userId)
+                    .toList();
+                if (typingUsers.isNotEmpty) {
+                  // Solo muestra el primero (puedes mostrar todos si quieres)
+                  return Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: Text(
+                      '💬 ${typingUsers.length == 1 ? "${typingUsers[0]['user_id']} está escribiendo..." : "Alguien está escribiendo..."}',
+                      style: const TextStyle(color: Colors.deepPurple, fontStyle: FontStyle.italic),
+                    ),
+                  );
+                }
+              }
+              return const SizedBox.shrink();
+            },
+          ),
           Expanded(
             child: StreamBuilder<List<Map<String, dynamic>>>(
               stream: _messagesStream,
@@ -317,12 +383,182 @@ class _ChatScreenState extends State<ChatScreen> {
                       }(),
                       builder: (context, profileSnapshot) {
                         final profile = profileSnapshot.data ?? {'username': '...', 'avatar_url': null};
+                        bool isValidAvatarUrl(String? url) {
+                          if (url == null) return false;
+                          final uri = Uri.tryParse(url);
+                          return uri != null && (uri.isScheme('http') || uri.isScheme('https'));
+                        }
                         return ListTile(
-                          leading: profile['avatar_url'] != null && (profile['avatar_url'] as String).isNotEmpty
-                              ? CircleAvatar(
-                                  backgroundImage: NetworkImage(profile['avatar_url']),
-                                )
-                              : const CircleAvatar(child: Icon(Icons.person)),
+                          leading: GestureDetector(
+                            onTap: () {
+                              showDialog(
+                                context: context,
+                                barrierDismissible: true,
+                                builder: (context) {
+                                  final isCurrentUser = userId == Supabase.instance.client.auth.currentUser?.id;
+                                  TextEditingController nameController = TextEditingController(text: profile['username']);
+                                  TextEditingController avatarController = TextEditingController(text: profile['avatar_url'] ?? '');
+                                  File? selectedImage;
+                                  bool loading = false;
+                                  String? errorMsg;
+                                  return StatefulBuilder(
+                                    builder: (context, setState) {
+                                      return Dialog(
+                                        backgroundColor: Colors.black87,
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(16.0),
+                                          child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Align(
+                                                alignment: Alignment.topRight,
+                                                child: IconButton(
+                                                  icon: const Icon(Icons.close, color: Colors.white),
+                                                  onPressed: () => Navigator.of(context).pop(),
+                                                ),
+                                              ),
+                                              isValidAvatarUrl(profile['avatar_url'])
+                                                  ? Center(
+                                                      child: ClipRRect(
+                                                        borderRadius: BorderRadius.circular(12),
+                                                        child: Image.network(
+                                                          profile['avatar_url'],
+                                                          width: 220,
+                                                          height: 220,
+                                                          fit: BoxFit.cover,
+                                                        ),
+                                                      ),
+                                                    )
+                                                  : const Icon(Icons.person, size: 120, color: Colors.white),
+                                              const SizedBox(height: 16),
+                                              Text(
+                                                profile['username'],
+                                                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
+                                              ),
+                                              if (isCurrentUser) ...[
+                                                const SizedBox(height: 18),
+                                                TextField(
+                                                  controller: nameController,
+                                                  style: const TextStyle(color: Colors.white),
+                                                  decoration: InputDecoration(
+                                                    labelText: 'Editar nombre',
+                                                    labelStyle: const TextStyle(color: Colors.white70),
+                                                    enabledBorder: OutlineInputBorder(
+                                                      borderSide: BorderSide(color: Colors.white24),
+                                                    ),
+                                                    focusedBorder: OutlineInputBorder(
+                                                      borderSide: BorderSide(color: Colors.white),
+                                                    ),
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 10),
+                                                TextField(
+                                                  controller: avatarController,
+                                                  style: const TextStyle(color: Colors.white),
+                                                  decoration: InputDecoration(
+                                                    labelText: 'Editar URL de avatar',
+                                                    labelStyle: const TextStyle(color: Colors.white70),
+                                                    enabledBorder: OutlineInputBorder(
+                                                      borderSide: BorderSide(color: Colors.white24),
+                                                    ),
+                                                    focusedBorder: OutlineInputBorder(
+                                                      borderSide: BorderSide(color: Colors.white),
+                                                    ),
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 10),
+                                                ElevatedButton.icon(
+                                                  icon: const Icon(Icons.image),
+                                                  label: const Text('Seleccionar imagen'),
+                                                  onPressed: loading ? null : () async {
+                                                    if (kIsWeb) return;
+                                                    final picker = ImagePicker();
+                                                    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
+                                                    if (pickedFile != null) {
+                                                      setState(() {
+                                                        selectedImage = File(pickedFile.path);
+                                                      });
+                                                    }
+                                                  },
+                                                ),
+                                                if (selectedImage != null && !kIsWeb)
+                                                  Padding(
+                                                    padding: const EdgeInsets.only(top: 8),
+                                                    child: SizedBox(
+                                                      width: 80,
+                                                      height: 80,
+                                                      child: Image.file(selectedImage!),
+                                                    ),
+                                                  ),
+                                                if (errorMsg != null)
+                                                  Padding(
+                                                    padding: const EdgeInsets.only(top: 8),
+                                                    child: Text(errorMsg!, style: const TextStyle(color: Colors.redAccent)),
+                                                  ),
+                                                const SizedBox(height: 16),
+                                                ElevatedButton(
+                                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.deepPurple),
+                                                  onPressed: loading
+                                                      ? null
+                                                      : () async {
+                                                          setState(() { loading = true; errorMsg = null; });
+                                                          String newAvatarUrl = avatarController.text.trim();
+                                                          try {
+                                                            if (selectedImage != null && !kIsWeb) {
+                                                              final fileName = 'avatars/${userId}_${DateTime.now().millisecondsSinceEpoch}.png';
+                                                              final bytes = await selectedImage!.readAsBytes();
+                                                              final response = await Supabase.instance.client.storage
+                                                                  .from('avatars')
+                                                                  .uploadBinary(fileName, bytes, fileOptions: const FileOptions(upsert: true));
+                                                              if (response.isNotEmpty) {
+                                                                newAvatarUrl = Supabase.instance.client.storage.from('avatars').getPublicUrl(fileName);
+                                                              }
+                                                            }
+                                                            await Supabase.instance.client.from('profiles').upsert({
+                                                              'id': userId,
+                                                              'username': nameController.text.trim(),
+                                                              'avatar_url': newAvatarUrl,
+                                                              'updated_at': DateTime.now().toIso8601String(),
+                                                            });
+                                                            if (!mounted) return;
+                                                            setState(() { loading = false; });
+                                                            // Limpiar el cache y refrescar la pantalla principal
+                                                            Navigator.of(context).pop();
+                                                            ScaffoldMessenger.of(context).showSnackBar(
+                                                              const SnackBar(content: Text('Perfil actualizado')),);
+                                                            // Eliminar el perfil cacheado y refrescar el chat (nombre y avatar)
+                                                            if (context.mounted) {
+                                                              final chatState = context.findAncestorStateOfType<_ChatScreenState>();
+                                                              if (chatState != null) {
+                                                                chatState.setState(() {
+                                                                  chatState._profileCache.remove(userId);
+                                                                  // Fuerza refresco de todos los mensajes
+                                                                });
+                                                              }
+                                                            }
+                                                          } catch (e) {
+                                                            setState(() { loading = false; errorMsg = 'Error: $e'; });
+                                                          }
+                                                        },
+                                                  child: loading ? const CircularProgressIndicator() : const Text('Guardar cambios'),
+                                                ),
+                                              ],
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  );
+                                },
+                              );
+                            },
+                            child: isValidAvatarUrl(profile['avatar_url'])
+                                ? CircleAvatar(
+                                    backgroundImage: NetworkImage(profile['avatar_url']),
+                                  )
+                                : const CircleAvatar(child: Icon(Icons.person)),
+                          ),
                           title: Text(profile['username']),
                           subtitle: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
