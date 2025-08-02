@@ -34,11 +34,15 @@ class MessageCensor {
     }
   }
 
-  // Censurar mensaje po causa
+  // Censurar mensaje
   static Future<String> censorMessage(String message) async {
     await _loadWords();
     String censored = message;
     final blacklist = _cachedBlacklist ?? [];
+
+    if (blacklist.isEmpty) {
+      return message; // No hay nada que censurar
+    }
 
     // Aplicar blacklist (expresiones regulares)
     for (final word in blacklist) {
@@ -64,11 +68,17 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _fetchBlockedUsers();
-    // The stream fetches all messages, UI will handle visibility
+    // Precargar la lista de palabras para que esté disponible más rápido la primera vez.
+    MessageCensor._loadWords();
+
+    // El stream obtiene todos los mensajes, la UI manejará la visibilidad
     _messagesStream = Supabase.instance.client
         .from('messages')
         .stream(primaryKey: ['id'])
-        .order('created_at');
+        .order(
+          'created_at',
+          ascending: false,
+        ); // Ordenar descendente para ListView.builder(reverse: true)
   }
 
   @override
@@ -94,16 +104,18 @@ class _ChatScreenState extends State<ChatScreen> {
         });
       }
     } catch (e) {
-      // Handle error
+      // Manejar error
     }
   }
 
   Future<void> _sendMessage() async {
-    if (_textController.text.isEmpty) return;
+    final content = _textController.text.trim();
+    if (content.isEmpty) return;
     try {
       final userId = Supabase.instance.client.auth.currentUser!.id;
+      // IMPORTANTE: Aquí se guarda el mensaje original, sin censura.
       await Supabase.instance.client.from('messages').insert({
-        'content': _textController.text.trim(),
+        'content': content,
         'user_id': userId,
       });
       _textController.clear();
@@ -454,12 +466,36 @@ class _ChatScreenState extends State<ChatScreen> {
                                               ? CrossAxisAlignment.end
                                               : CrossAxisAlignment.start,
                                       children: [
-                                        Text(
-                                          message['content'],
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodyMedium
-                                              ?.copyWith(fontSize: 16),
+                                        // Lógica de censura aplicada aquí
+                                        FutureBuilder<String>(
+                                          future: MessageCensor.censorMessage(
+                                            message['content'],
+                                          ),
+                                          builder: (context, snapshot) {
+                                            if (snapshot.connectionState ==
+                                                ConnectionState.waiting) {
+                                              return const Text(
+                                                '...',
+                                                style: TextStyle(fontSize: 16),
+                                              );
+                                            }
+                                            if (snapshot.hasError) {
+                                              return const Text(
+                                                'Error',
+                                                style: TextStyle(fontSize: 16),
+                                              );
+                                            }
+                                            final censoredContent =
+                                                snapshot.data ??
+                                                message['content'];
+                                            return Text(
+                                              censoredContent,
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodyMedium
+                                                  ?.copyWith(fontSize: 16),
+                                            );
+                                          },
                                         ),
                                         const SizedBox(height: 4),
                                         Text(
