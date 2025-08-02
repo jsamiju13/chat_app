@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:chat_app/splash_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -24,6 +23,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _sendMessage() async {
     if (_textController.text.isEmpty) return;
+
     try {
       final userId = Supabase.instance.client.auth.currentUser!.id;
       await Supabase.instance.client.from('messages').insert({
@@ -32,33 +32,33 @@ class _ChatScreenState extends State<ChatScreen> {
       });
       _textController.clear();
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error al enviar mensaje: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error al enviar mensaje: $e'))
+      );
     }
   }
 
   Future<void> _signOut() async {
     try {
       await Supabase.instance.client.auth.signOut();
+      // NO NAVEGUES MANUALMENTE - El SplashScreen se encargará automáticamente
+      // cuando detecte que el usuario ya no está autenticado
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error al cerrar sesión: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error al cerrar sesión: $e'))
+      );
     }
-    if (!mounted) return;
-    Navigator.of(
-      context,
-    ).pushReplacement(MaterialPageRoute(builder: (_) => const SplashScreen()));
   }
 
   String _formatDate(String isoDate) {
     final date = DateTime.parse(isoDate).toLocal();
     final now = DateTime.now();
-    final isToday =
-        date.year == now.year && date.month == now.month && date.day == now.day;
-    final hourMinute =
-        '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    final isToday = date.year == now.year &&
+                   date.month == now.month &&
+                   date.day == now.day;
+
+    final hourMinute = '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+
     if (isToday) {
       return hourMinute;
     } else {
@@ -93,9 +93,11 @@ class _ChatScreenState extends State<ChatScreen> {
                     child: Text('¡Algo salió mal! ${snapshot.error}'),
                   );
                 }
+
                 if (!snapshot.hasData || snapshot.data!.isEmpty) {
                   return const Center(child: Text('Aún no hay mensajes.'));
                 }
+
                 final messages = snapshot.data!;
                 return ListView.builder(
                   reverse: true,
