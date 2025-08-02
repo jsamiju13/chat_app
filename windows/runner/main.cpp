@@ -4,6 +4,9 @@
 
 #include "flutter_window.h"
 #include "utils.h"
+#include "url_launcher_plugin.h"
+// Forward declarations
+void CALLBACK ProtocolCallback(HWND hwnd, HINSTANCE hinst, LPWSTR lpszCmdLine, int nCmdShow);
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
@@ -16,6 +19,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // Initialize COM, so that it is available for use in the library and/or
   // plugins.
   ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+
+  // Handle protocol activation.
+  if (command_line != nullptr && wcslen(command_line) > 0) {
+      ProtocolCallback(nullptr, instance, command_line, show_command);
+      return EXIT_SUCCESS;
+  }
 
   flutter::DartProject project(L"data");
 
@@ -40,4 +49,11 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   ::CoUninitialize();
   return EXIT_SUCCESS;
+}
+
+void CALLBACK ProtocolCallback(HWND hwnd, HINSTANCE hinst, LPWSTR lpszCmdLine, int nCmdShow) {
+    // This function is called when the app is launched with a protocol link.
+    // The command line argument will be the URL.
+    // Pass it to the url_launcher_windows plugin.
+    url_launcher_plugin_handle_protocol_launch(lpszCmdLine);
 }
